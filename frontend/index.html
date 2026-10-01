@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DisasterShield — Earth Engine Risk & Emergency Routing</title>
+  <link href="https://unpkg.com/maplibre-gl@5.6.1/dist/maplibre-gl.css" rel="stylesheet">
+  <style>
+    :root {
+      --bg:#07111f; --panel:#0d1b2d; --panel2:#10243a; --border:#1d3853;
+      --text:#eef6ff; --muted:#91a8be; --accent:#48d4ff; --danger:#ff5c68;
+      --warn:#ffbf4b; --good:#4bd38a;
+    }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif; background:var(--bg); color:var(--text); }
+    header { padding:22px 28px; border-bottom:1px solid var(--border); background:#091726; }
+    .brand { display:flex; gap:13px; align-items:center; }
+    .logo { width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,#48d4ff,#6573ff);display:grid;place-items:center;font-weight:900;color:#06101b; }
+    h1 { margin:0; font-size:22px; } header p { margin:5px 0 0;color:var(--muted);font-size:13px; }
+    .layout { display:grid; grid-template-columns:360px minmax(0,1fr); min-height:calc(100vh - 86px); }
+    aside { padding:18px; border-right:1px solid var(--border); background:var(--panel); overflow:auto; }
+    main { position:relative; min-width:0; }
+    #map { width:100%; height:calc(100vh - 86px); min-height:600px; background:#dbe5ec; }
+    .section { border:1px solid var(--border); background:var(--panel2); border-radius:14px; padding:14px; margin-bottom:12px; }
+    .section h2 { font-size:13px; margin:0 0 10px; color:#cfe4f6; text-transform:uppercase; letter-spacing:.08em; }
+    label { display:block;font-size:12px;color:var(--muted);margin:9px 0 5px; }
+    input,select,button { width:100%; border-radius:9px; border:1px solid var(--border); background:#081522; color:var(--text); padding:10px; font:inherit; }
+    button { cursor:pointer; font-weight:700; background:#12334b; }
+    button:hover { border-color:#48d4ff; }
+    button.primary { background:var(--accent);color:#06121c;border-color:var(--accent); }
+    button.secondary { background:#172b3e; }
+    .row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .status { font-size:12px; line-height:1.5; color:var(--muted); }
+    .metric-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:10px; }
+    .metric { padding:10px;border:1px solid var(--border);border-radius:10px;background:#091a2a; }
+    .metric b { display:block;font-size:17px;margin-top:3px; }
+    .metric span { color:var(--muted);font-size:10px; }
+    .risk { display:flex;align-items:center;justify-content:space-between;padding:12px;border-radius:11px;border:1px solid var(--border); }
+    .risk-score { font-size:30px;font-weight:850; }
+    .pill { padding:5px 9px;border-radius:999px;font-size:11px;font-weight:800; }
+    .low { background:#103f2a;color:#65e4a1; } .moderate { background:#463617;color:#ffd36b; }
+    .high { background:#49281d;color:#ff9b6c; } .critical { background:#481b27;color:#ff7888; }
+    .map-card { position:absolute; top:16px; right:16px; z-index:500; width:300px; background:rgba(7,17,31,.94);border:1px solid var(--border);border-radius:14px;padding:13px;backdrop-filter:blur(8px); }
+    .map-card strong { font-size:13px; } .map-card p { margin:5px 0;color:var(--muted);font-size:11px;line-height:1.4; }
+    .legend { display:flex;gap:8px;flex-wrap:wrap;font-size:10px;color:var(--muted);margin-top:8px; }
+    .dot { width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:4px; }
+    .route-stat { display:flex;gap:16px;margin:8px 0;font-size:12px; }
+    .route-stat b { font-size:18px; }
+    .leaflet-control-attribution { font-size:9px; }
+    @media(max-width:850px) {
+      .layout { grid-template-columns:1fr; }
+      aside { border-right:0;border-bottom:1px solid var(--border); }
+      #map { height:65vh;min-height:480px; }
+      .map-card { position:relative; top:auto;right:auto;margin:10px; width:auto; }
+    }
+  </style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <div class="logo">DS</div>
+    <div>
+      <h1>DisasterShield</h1>
+      <p>Earth Engine disaster-risk screening · emergency routing · live open map</p>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <aside>
+    <div class="section">
+      <h2>1 · Risk assessment</h2>
+      <label for="hazard">Hazard</label>
+      <select id="hazard">
+        <option>Flood</option>
+        <option>Landslide</option>
+        <option>General</option>
+      </select>
+
+      <label for="radius">Assessment radius</label>
+      <select id="radius">
+        <option value="1000">1 km</option>
+        <option value="2500" selected>2.5 km</option>
+        <option value="5000">5 km</option>
+        <option value="10000">10 km</option>
+      </select>
+
+      <button id="assess" class="primary" style="margin-top:10px">Assess risk with Earth Engine</button>
+      <div id="riskStatus" class="status" style="margin-top:9px">Click the map to choose an assessment point.</div>
+      <div id="riskPanel" style="display:none;margin-top:10px">
+        <div class="risk">
+          <div><span style="color:var(--muted);font-size:11px">Risk index</span><div id="riskScore" class="risk-score">—</div></div>
+          <span id="riskLevel" class="pill">—</span>
+        </div>
+        <div class="metric-grid">
+          <div class="metric"><span>Water occurrence</span><b id="mWater">—</b></div>
+          <div class="metric"><span>Mean elevation</span><b id="mElev">—</b></div>
+          <div class="metric"><span>Mean slope</span><b id="mSlope">—</b></div>
+          <div class="metric"><span>Recent NDVI</span><b id="mNdvi">—</b></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>2 · Emergency route</h2>
+      <label for="destination">Emergency destination</label>
+      <select id="destination">
+        <option value="hospital">Nearest selected hospital (demo)</option>
+        <option value="shelter">Emergency shelter point</option>
+        <option value="custom">Custom destination</option>
+      </select>
+      <label for="destLat">Destination latitude</label>
+      <input id="destLat" type="number" step="any" placeholder="e.g. 13.6288">
+      <label for="destLon">Destination longitude</label>
+      <input id="destLon" type="number" step="any" placeholder="e.g. 79.4192">
+      <button id="route" class="primary" style="margin-top:10px">Find safest route</button>
+      <div id="routeStatus" class="status" style="margin-top:9px">Set an assessment point and destination.</div>
+      <div id="routePanel" style="display:none">
+        <div class="route-stat">
+          <div><span style="color:var(--muted);font-size:10px">DISTANCE</span><br><b id="routeDistance">—</b></div>
+          <div><span style="color:var(--muted);font-size:10px">ETA</span><br><b id="routeEta">—</b></div>
+        </div>
+        <button id="googleMaps" class="secondary">Open selected route in Google Maps</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>3 · Presentation notes</h2>
+      <div class="status">
+        <b style="color:#eef6ff">Data:</b> Google Earth Engine · Sentinel-2 · SRTM · JRC Surface Water<br><br>
+        <b style="color:#eef6ff">Road network:</b> OpenStreetMap + OSRM<br><br>
+        <b style="color:#eef6ff">Navigation:</b> Google Maps handoff<br><br>
+        This index is a demonstrator and should not replace official disaster warnings or responder instructions.
+      </div>
+    </div>
+  </aside>
+
+  <main>
+    <div id="map"></div>
+    <div class="map-card">
+      <strong>Live geospatial decision view</strong>
+      <p>Click anywhere on the map to set the assessment origin. Risk analysis runs on Google Earth Engine.</p>
+      <div class="legend">
+        <span><i class="dot" style="background:#48d4ff"></i>assessment</span>
+        <span><i class="dot" style="background:#ff5c68"></i>destination</span>
+        <span><i class="dot" style="background:#65e4a1"></i>route</span>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="https://unpkg.com/maplibre-gl@5.6.1/dist/maplibre-gl.js"></script>
+<script>
+const API = "http://localhost:8000";
+
+const map = new maplibregl.Map({
+  container: "map",
+  style: "https://tiles.openfreemap.org/styles/liberty",
+  center: [79.4192, 13.6288],
+  zoom: 11,
+  attributionControl: true
+});
+
+map.addControl(new maplibregl.NavigationControl(), "top-left");
+
+let originMarker = null;
+let destinationMarker = null;
+let selected = null;
+
+function makeMarker(color) {
+  const el = document.createElement("div");
+  el.style.width = "18px";
+  el.style.height = "18px";
+  el.style.borderRadius = "50%";
+  el.style.background = color;
+  el.style.border = "3px solid white";
+  el.style.boxShadow = "0 2px 8px rgba(0,0,0,.45)";
+  return el;
+}
+
+function setOrigin(lat, lon) {
+  selected = {lat, lon};
+
+  if (originMarker) originMarker.remove();
+
+  originMarker = new maplibregl.Marker({
+    element: makeMarker("#48d4ff"),
+    anchor: "center"
+  })
+    .setLngLat([lon, lat])
+    .setPopup(new maplibregl.Popup({offset: 14}).setText("Assessment origin"))
+    .addTo(map);
+
+  document.getElementById("riskStatus").textContent =
+    `Selected ${lat.toFixed(5)}, ${lon.toFixed(5)}. Run Earth Engine assessment.`;
+}
+
+map.on("click", e => {
+  setOrigin(e.lngLat.lat, e.lngLat.lng);
+});
+
+map.on("load", () => {
+  document.getElementById("riskStatus").textContent =
+    "Map ready. Click anywhere on the map to choose an assessment point.";
+});
+
+document.getElementById("assess").addEventListener("click", async () => {
+  if (!selected) {
+    document.getElementById("riskStatus").textContent = "Select a point on the map first.";
+    return;
+  }
+
+  const status = document.getElementById("riskStatus");
+  status.textContent = "Running live Earth Engine analysis…";
+
+  try {
+    const res = await fetch(`${API}/api/risk`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        lat: selected.lat,
+        lon: selected.lon,
+        radius_m: Number(document.getElementById("radius").value),
+        hazard: document.getElementById("hazard").value
+      })
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Risk service failed");
+
+    document.getElementById("riskPanel").style.display = "block";
+    document.getElementById("riskScore").textContent = data.score;
+
+    const level = document.getElementById("riskLevel");
+    level.textContent = data.level;
+    level.className = "pill " + data.level.toLowerCase();
+
+    document.getElementById("mWater").textContent =
+      data.metrics.water_occurrence_pct + "%";
+    document.getElementById("mElev").textContent =
+      data.metrics.mean_elevation_m + " m";
+    document.getElementById("mSlope").textContent =
+      data.metrics.mean_slope_deg + "°";
+    document.getElementById("mNdvi").textContent =
+      data.metrics.recent_ndvi;
+
+    status.textContent =
+      `Earth Engine analysis complete · ${data.metrics.sentinel2_images_used} recent Sentinel-2 scenes used.`;
+  } catch (err) {
+    status.textContent = "Error: " + err.message;
+  }
+});
+
+document.getElementById("route").addEventListener("click", async () => {
+  if (!selected) {
+    document.getElementById("routeStatus").textContent =
+      "Select an assessment point first.";
+    return;
+  }
+
+  const lat = Number(document.getElementById("destLat").value);
+  const lon = Number(document.getElementById("destLon").value);
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    document.getElementById("routeStatus").textContent =
+      "Enter valid destination latitude and longitude.";
+    return;
+  }
+
+  const status = document.getElementById("routeStatus");
+  status.textContent = "Calculating live road route with OSRM…";
+
+  try {
+    const res = await fetch(`${API}/api/route`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        origin: selected,
+        destination: {lat, lon}
+      })
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Routing failed");
+
+    if (destinationMarker) destinationMarker.remove();
+
+    destinationMarker = new maplibregl.Marker({
+      element: makeMarker("#ff5c68"),
+      anchor: "center"
+    })
+      .setLngLat([lon, lat])
+      .setPopup(new maplibregl.Popup({offset: 14}).setText("Emergency destination"))
+      .addTo(map);
+
+    const routeGeoJSON = {
+      type: "Feature",
+      properties: {},
+      geometry: data.geometry
+    };
+
+    if (map.getSource("emergency-route")) {
+      map.getSource("emergency-route").setData(routeGeoJSON);
+    } else {
+      map.addSource("emergency-route", {
+        type: "geojson",
+        data: routeGeoJSON
+      });
+
+      map.addLayer({
+        id: "emergency-route-line",
+        type: "line",
+        source: "emergency-route",
+        layout: {
+          "line-cap": "round",
+          "line-join": "round"
+        },
+        paint: {
+          "line-color": "#35c98a",
+          "line-width": 6,
+          "line-opacity": 0.92
+        }
+      });
+    }
+
+    // Fit the route using its GeoJSON coordinates.
+    const coords = data.geometry.coordinates;
+    const bounds = new maplibregl.LngLatBounds();
+    coords.forEach(c => bounds.extend(c));
+    map.fitBounds(bounds, {padding: 70, maxZoom: 15});
+
+    document.getElementById("routePanel").style.display = "block";
+    document.getElementById("routeDistance").textContent =
+      data.distance_km + " km";
+    document.getElementById("routeEta").textContent =
+      data.duration_min + " min";
+    status.textContent = "Live road route found.";
+
+    document.getElementById("googleMaps").onclick = () => {
+      const url =
+        "https://www.google.com/maps/dir/?api=1" +
+        `&origin=${selected.lat},${selected.lon}` +
+        `&destination=${lat},${lon}` +
+        "&travelmode=driving";
+
+      window.open(url, "_blank", "noopener,noreferrer");
+    };
+  } catch (err) {
+    status.textContent = "Error: " + err.message;
+  }
+});
+
+// Demo destination values are deliberately explicit and editable.
+// They are not presented as authoritative nearest facilities.
+document.getElementById("destination").addEventListener("change", e => {
+  if (e.target.value === "hospital") {
+    document.getElementById("destLat").value = "13.6288";
+    document.getElementById("destLon").value = "79.4192";
+  } else if (e.target.value === "shelter") {
+    document.getElementById("destLat").value = "13.6320";
+    document.getElementById("destLon").value = "79.4150";
+  } else {
+    document.getElementById("destLat").value = "";
+    document.getElementById("destLon").value = "";
+  }
+});
+
+document.getElementById("destination").dispatchEvent(new Event("change"));
+</script>
+</body>
+</html>
