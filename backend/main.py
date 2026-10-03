@@ -1,3 +1,4 @@
+import shutil
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -26,7 +27,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+render_credentials = "/etc/secrets/credentials"
 
+if os.path.exists(render_credentials):
+    credentials_dir = os.path.expanduser("~/.config/earthengine")
+    os.makedirs(credentials_dir, exist_ok=True)
+    shutil.copy(render_credentials, os.path.join(credentials_dir, "credentials"))
 EE_PROJECT = os.getenv("EE_PROJECT")
 
 try:
